@@ -1,0 +1,25 @@
+# Secretos y entorno local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Datos y volúmenes locales
+backups/
+data/
+pgdata/
+n8n_data/
+*.sql.gz
+*.dump
+
+# Reportes generados y logs
+reports/
+*.log
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
