@@ -1,1 +1,115 @@
-{"updatedAt":"2026-09-25T21:54:00.214Z","createdAt":"2026-09-25T21:46:40.692Z","id":"4Hae2QzX75z9T3ZT","name":"samsara-mock-locations","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"path":"fleet/vehicles/locations","responseMode":"responseNode","options":{}},"type":"n8n-nodes-base.webhook","typeVersion":2.1,"position":[0,0],"id":"c6c0427d-43e4-4167-b8d5-8699636b0447","name":"Webhook","webhookId":"a243d3c7-621c-40cf-8200-45665e57a2c3"},{"parameters":{"jsCode":"const now = new Date().toISOString();\n\nconst vehicles = [\n  {\n    id: \"veh-synth-001\",\n    name: \"TRUCK-SYN-01\",\n    location: {\n      latitude: 25.6866,\n      longitude: -100.3161,\n      speedMilesPerHour: 58,\n      time: now,\n      heading: 92,\n      reverseGeo: { formattedLocation: \"Monterrey, NL (synthetic)\" }\n    },\n    is_synthetic: true\n  },\n  {\n    id: \"veh-synth-002\",\n    name: \"TRUCK-SYN-02\",\n    location: {\n      latitude: 21.8853,\n      longitude: -102.2916,\n      speedMilesPerHour: 0,\n      time: now,\n      heading: 0,\n      reverseGeo: { formattedLocation: \"Aguascalientes, AGS (synthetic)\" }\n    },\n    is_synthetic: true\n  }\n];\n\nreturn [{ json: { data: vehicles, pagination: { endCursor: null, hasNextPage: false } } }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[224,0],"id":"3a91701a-175c-4811-87bb-3c8944eba8c9","name":"Build Mock Locations"},{"parameters":{"options":{}},"type":"n8n-nodes-base.respondToWebhook","typeVersion":1.5,"position":[448,0],"id":"aa60cd3a-6936-4e7f-b4d6-4b4ca2703344","name":"Respond to Webhook"}],"connections":{"Webhook":{"main":[[{"node":"Build Mock Locations","type":"main","index":0}]]},"Build Mock Locations":{"main":[[{"node":"Respond to Webhook","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate"},"staticData":null,"meta":null,"nodeGroups":[],"pinData":{},"versionId":"ed29e68c-6d8c-49fb-9c28-3d267cdaad28","activeVersionId":"ed29e68c-6d8c-49fb-9c28-3d267cdaad28","versionCounter":8,"triggerCount":1,"sourceWorkflowId":null,"tags":[],"shared":[{"updatedAt":"2026-09-25T21:46:40.692Z","createdAt":"2026-09-25T21:46:40.692Z","role":"workflow:owner","workflowId":"4Hae2QzX75z9T3ZT","projectId":"XLSQ9BfHWp5ic67H","project":{"updatedAt":"2026-09-23T16:23:03.392Z","createdAt":"2026-09-23T16:14:37.793Z","id":"XLSQ9BfHWp5ic67H","name":"Yaretzi Castillo <yarecasst@gmail.com>","type":"personal","icon":null,"description":null,"customTelemetryTags":[],"creatorId":"3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"}}],"versionMetadata":{"name":"Version 1","description":""}}
+{
+  "updatedAt": "2026-09-25T21:54:00.214Z",
+  "createdAt": "2026-09-25T21:46:40.692Z",
+  "id": "4Hae2QzX75z9T3ZT",
+  "name": "samsara-mock-locations",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "fleet/vehicles/locations",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c6c0427d-43e4-4167-b8d5-8699636b0447",
+      "name": "Webhook",
+      "webhookId": "a243d3c7-621c-40cf-8200-45665e57a2c3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date().toISOString();\n\nconst vehicles = [\n  {\n    id: \"veh-synth-001\",\n    name: \"TRUCK-SYN-01\",\n    location: {\n      latitude: 25.6866,\n      longitude: -100.3161,\n      speedMilesPerHour: 58,\n      time: now,\n      heading: 92,\n      reverseGeo: { formattedLocation: \"Monterrey, NL (synthetic)\" }\n    },\n    is_synthetic: true\n  },\n  {\n    id: \"veh-synth-002\",\n    name: \"TRUCK-SYN-02\",\n    location: {\n      latitude: 21.8853,\n      longitude: -102.2916,\n      speedMilesPerHour: 0,\n      time: now,\n      heading: 0,\n      reverseGeo: { formattedLocation: \"Aguascalientes, AGS (synthetic)\" }\n    },\n    is_synthetic: true\n  }\n];\n\nreturn [{ json: { data: vehicles, pagination: { endCursor: null, hasNextPage: false } } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "3a91701a-175c-4811-87bb-3c8944eba8c9",
+      "name": "Build Mock Locations"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "aa60cd3a-6936-4e7f-b4d6-4b4ca2703344",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Mock Locations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Mock Locations": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "ed29e68c-6d8c-49fb-9c28-3d267cdaad28",
+  "activeVersionId": "ed29e68c-6d8c-49fb-9c28-3d267cdaad28",
+  "versionCounter": 8,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-09-25T21:46:40.692Z",
+      "createdAt": "2026-09-25T21:46:40.692Z",
+      "role": "workflow:owner",
+      "workflowId": "4Hae2QzX75z9T3ZT",
+      "projectId": "XLSQ9BfHWp5ic67H",
+      "project": {
+        "updatedAt": "2026-09-23T16:23:03.392Z",
+        "createdAt": "2026-09-23T16:14:37.793Z",
+        "id": "XLSQ9BfHWp5ic67H",
+        "name": "Yaretzi Castillo <yarecasst@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 1",
+    "description": ""
+  }
+}

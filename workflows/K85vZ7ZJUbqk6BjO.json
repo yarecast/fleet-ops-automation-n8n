@@ -1,1 +1,661 @@
-{"updatedAt":"2026-09-29T16:38:41.656Z","createdAt":"2026-09-26T21:17:07.083Z","id":"K85vZ7ZJUbqk6BjO","name":"flujo-a-track-and-trace","description":null,"active":true,"isArchived":false,"nodes":[{"parameters":{"httpMethod":"POST","path":"ops/inbound-events","responseMode":"responseNode","options":{"rawBody":true}},"type":"n8n-nodes-base.webhook","typeVersion":2.1,"position":[0,-48],"id":"7c832688-70d5-494a-8385-c5fea3ef9461","name":"Webhook","webhookId":"1509e88d-9395-430f-8d35-1f8bc6989f4e"},{"parameters":{"jsCode":"const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBodyString = buffer.toString('utf8');\nconst rawBodyBase64 = buffer.toString('base64');\n\nconst item = $input.first().json;\nconst headers = item.headers || {};\n\nlet parsedBody;\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  throw new Error('Body no es JSON valido');\n}\n\nreturn [{\n  json: {\n    rawBodyString,\n    rawBodyBase64,\n    parsedBody,\n    signatureHeader: headers['x-samsara-signature'],\n    timestampHeader: headers['x-samsara-timestamp']\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[224,-48],"id":"1521e032-f73c-4bb4-b206-20125fe53f31","name":"Parse Raw Body"},{"parameters":{"jsCode":"const crypto = require('crypto');\n\nconst item = $input.first().json;\nconst { rawBodyString, signatureHeader, timestampHeader } = item;\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Faltan headers de firma o timestamp');\n}\n\nconst secretBuffer = Buffer.from($env.SAMSARA_MOCK_SHARED_SECRET, 'base64');\nconst signedPayload = `v1:${timestampHeader}:${rawBodyString}`;\n\nconst hmac = crypto.createHmac('sha256', secretBuffer);\nhmac.update(signedPayload, 'utf8');\nconst expectedHex = hmac.digest('hex');\nconst receivedHex = (signatureHeader.split('=')[1] || '').trim();\n\nconst expectedBuf = Buffer.from(expectedHex, 'hex');\nconst receivedBuf = Buffer.from(receivedHex, 'hex');\n\nconst signatureValid = expectedBuf.length === receivedBuf.length\n  && crypto.timingSafeEqual(expectedBuf, receivedBuf);\n\nif (!signatureValid) {\n  throw new Error('Firma invalida');\n}\n\nconst nowSeconds = Math.floor(Date.now() / 1000);\nconst tsSeconds = parseInt(timestampHeader, 10);\nconst toleranceSeconds = 300;\n\nif (!Number.isFinite(tsSeconds) || Math.abs(nowSeconds - tsSeconds) > toleranceSeconds) {\n  throw new Error('Timestamp fuera de tolerancia (posible replay)');\n}\n\nreturn [{ json: item }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[448,-48],"id":"99b1535e-a243-4102-9b10-e6cb904496ec","name":"Validate Signature And Freshness"},{"parameters":{"jsCode":"const item = $input.first().json;\nconst { rawBodyString, parsedBody } = item;\n\nconst MAX_BODY_BYTES = 10 * 1024;\nif (Buffer.byteLength(rawBodyString, 'utf8') > MAX_BODY_BYTES) {\n  throw new Error('Body excede el limite de tamano permitido');\n}\n\nconst isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;\nconst errors = [];\n\nif (!isNonEmptyString(parsedBody.eventId)) errors.push('eventId invalido');\nif (!isNonEmptyString(parsedBody.eventTime)) errors.push('eventTime invalido');\nif (!isNonEmptyString(parsedBody.eventType)) errors.push('eventType invalido');\n\nconst condition = parsedBody.data && Array.isArray(parsedBody.data.conditions)\n  ? parsedBody.data.conditions[0]\n  : null;\n\nif (!condition || condition.type !== 'vehicleGeofence') errors.push('tipo de condicion no soportado');\nif (!condition || !condition.vehicle || !isNonEmptyString(condition.vehicle.id)) errors.push('vehicle.id invalido');\nif (!condition || !condition.geofence || !isNonEmptyString(condition.geofence.id)) errors.push('geofence.id invalido');\n\nif (errors.length > 0) {\n  throw new Error(`Esquema invalido: ${errors.join('; ')}`);\n}\n\nreturn [{ json: item }];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[672,-48],"id":"db0e20bb-7a0f-4308-b74b-e52cac6f4ef0","name":"Validate Schema And Size"},{"parameters":{"operation":"executeQuery","query":"   SELECT COUNT(*)::int AS cnt FROM ops.inbound_events WHERE event_id = $1;","options":{"queryReplacement":"=={{ [$json.parsedBody.eventId] }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[896,-48],"id":"b7c26b34-1e6b-4688-b449-6dcb22c7c365","name":"Check Existing Event","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":3},"conditions":[{"id":"e02efe92-621f-4cb0-95dc-fbb6231857b1","leftValue":"={{ $json.cnt }}","rightValue":0,"operator":{"type":"number","operation":"gt"}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[1120,-48],"id":"428db2de-c167-4c50-a241-442fe5f885c7","name":"Is Duplicate?"},{"parameters":{"operation":"executeQuery","query":"   INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic)\n   VALUES ('warn', 'flujo-a-track-and-trace', 'duplicate_event_ignored', $1, true);","options":{"queryReplacement":"=={{ [$execution.id] }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[1344,-144],"id":"a7701a64-d010-4268-99fd-3d5a7aafc098","name":"Log Duplicate Event","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"respondWith":"json","responseBody":"{ \"status\": \"duplicate_ignored\" }","options":{}},"type":"n8n-nodes-base.respondToWebhook","typeVersion":1.5,"position":[1568,-144],"id":"6bb22a41-4147-40a4-b301-cf9b4ce3663c","name":"Respond to Webhook1"},{"parameters":{"operation":"executeQuery","query":"INSERT INTO ops.inbound_events (event_id, event_type, source, payload, status, is_synthetic)\nVALUES ($1, $2, 'samsara_mock', convert_from(decode($3, 'base64'), 'UTF8')::jsonb, 'received', true)\nON CONFLICT (event_id) DO NOTHING;","options":{"queryReplacement":"={{ $('Parse Raw Body').item.json.parsedBody.eventId }},{{ $('Parse Raw Body').item.json.parsedBody.eventType }},{{ $('Parse Raw Body').item.json.rawBodyBase64 }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[1344,48],"id":"fd0ab2c5-bb7e-413c-a26f-7fbf87017a9c","name":"Insert Inbound Event","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"jsCode":"const parsedBody = $('Parse Raw Body').item.json.parsedBody;\nconst condition = parsedBody.data.conditions[0];\nconst vehicle = condition.vehicle;\nconst geofence = condition.geofence;\nconst eventType = parsedBody.eventType;\nconst eventTime = parsedBody.eventTime;\n\nconst tripId = vehicle.tripId;\nif (tripId === undefined || tripId === null) {\n  throw new Error('Evento sin tripId, no se puede procesar');\n}\n\nconst destinationGeofenceByTrip = {\n  7: 'geo-synth-02',\n  11: 'geo-synth-01'\n};\n\nconst isDelivery = eventType === 'GeofenceExit'\n  && geofence.id === destinationGeofenceByTrip[tripId];\n\nconst PROJECTED_ETA_OFFSET_MIN = 25;\nconst eventTimeDate = new Date(eventTime);\nconst projectedEta = new Date(eventTimeDate.getTime() + PROJECTED_ETA_OFFSET_MIN * 60000).toISOString();\n\nreturn [{\n  json: {\n    eventId: parsedBody.eventId,\n    tripId,\n    isDelivery,\n    eventTimeIso: eventTime,\n    projectedEtaIso: projectedEta\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[1568,48],"id":"43417c68-8353-4122-8a18-5be455c5ba77","name":"Compute Trip Update"},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":3},"conditions":[{"id":"9a111074-2004-4a32-9fb0-c1a0bcca8633","leftValue":"={{ $json.isDelivery }}","rightValue":"","operator":{"type":"boolean","operation":"true","singleValue":true}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[1792,48],"id":"1bc25fc6-f032-470d-a8de-c79d16e04e60","name":"Is Delivery?"},{"parameters":{"operation":"executeQuery","query":"   UPDATE tmw.trips\n   SET status = 'delivered',\n       delivered_at = $2::timestamptz,\n       eta_deviation_min = ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - planned_eta)) / 60)::int,\n       updated_at = now()\n   WHERE trip_id = $1\nRETURNING trip_id, trip_ref, status, eta_deviation_min, delivered_at;","options":{"queryReplacement":"=={{ $json.tripId }},{{ $json.eventTimeIso }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[2016,-48],"id":"1c8174bb-9628-4b57-a91e-1120bc8c39d7","name":"Update Trip Delivered","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"operation":"executeQuery","query":"   UPDATE tmw.trips\n   SET status = CASE WHEN status NOT IN ('delivered','cancelled') THEN 'in_transit' ELSE status END,\n       current_eta = $2::timestamptz,\n       eta_deviation_min = ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - planned_eta)) / 60)::int,\n       updated_at = now()\n   WHERE trip_id = $1\nRETURNING trip_id, trip_ref, status, eta_deviation_min, current_eta;","options":{"queryReplacement":"=={{ $json.tripId }},{{ $json.projectedEtaIso }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[2016,144],"id":"14361e0d-3e5b-4098-a8aa-c3786f960c03","name":"Update Trip In Transit","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"operation":"executeQuery","query":"    INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic)\n    VALUES ('info', 'flujo-a-track-and-trace', $1, $2, true);","options":{"queryReplacement":"={{ $('Compute Trip Update').item.json.isDelivery ? 'trip_delivered' : 'trip_eta_updated' }},{{ $execution.id }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[3136,48],"id":"99f6bbc9-2c82-4c1f-a874-87547e7364c6","name":"Log Success","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"respondWith":"json","responseBody":"={{ JSON.stringify({ status: \"accepted\", tripId: $('Compute Trip Update').item.json.tripId, delivered: $('Compute Trip Update').item.json.isDelivery }) }}","options":{}},"type":"n8n-nodes-base.respondToWebhook","typeVersion":1.5,"position":[3360,48],"id":"435c5fe0-507a-442d-8ab4-3fad1e48d951","name":"Respond to Webhook2"},{"parameters":{"jsCode":"const updateResult = $input.first().json;\nconst context = $('Compute Trip Update').item.json;\n\nconst threshold = parseInt($env.ETA_DEVIATION_ALERT_THRESHOLD_MIN, 10);\nconst deviation = updateResult.eta_deviation_min;\nconst shouldNotify = context.isDelivery || Math.abs(deviation) >= threshold;\n\nconst message = context.isDelivery\n  ? `SINTETICO - Viaje ${updateResult.trip_ref} (ID ${updateResult.trip_id}) ENTREGADO. Desviacion ETA: ${deviation} min.`\n  : `SINTETICO - Viaje ${updateResult.trip_ref} (ID ${updateResult.trip_id}) en transito. Desviacion ETA proyectada: ${deviation} min.`;\n\nreturn [{\n  json: {\n    ...context,\n    etaDeviationMin: deviation,\n    tripRef: updateResult.trip_ref,\n    shouldNotify,\n    notificationMessage: message\n  }\n}];"},"type":"n8n-nodes-base.code","typeVersion":2,"position":[2240,48],"id":"dd13bf19-1ae2-47ad-a729-7790e72c46bf","name":"Prepare Notification"},{"parameters":{"operation":"executeQuery","query":"    UPDATE ops.inbound_events\n    SET status = 'processed', processed_at = now(), trip_id = $2\n    WHERE event_id = $1;","options":{"queryReplacement":"={{ $('Compute Trip Update').item.json.eventId }},{{ $('Compute Trip Update').item.json.tripId }}"}},"type":"n8n-nodes-base.postgres","typeVersion":2.7,"position":[2928,48],"id":"6f0e1368-df4e-4cd7-9dd4-33588702de33","name":"Mark Event Processed","credentials":{"postgres":{"id":"8xkpcIXbV0kg372k","name":"fleetops_app"}}},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict","version":3},"conditions":[{"id":"9dd886ac-6dae-49a2-a983-afb3379b7017","leftValue":"={{ $json.shouldNotify }}","rightValue":"","operator":{"type":"boolean","operation":"true","singleValue":true}}],"combinator":"and"},"options":{}},"type":"n8n-nodes-base.if","typeVersion":2.3,"position":[2464,48],"id":"644f3d30-36aa-4f48-96fa-af9bb50bd088","name":"Should Notify?"},{"parameters":{"chatId":"={{ $env.TELEGRAM_CHAT_ID }}","text":"={{ $json.notificationMessage }}","additionalFields":{"parse_mode":"Markdown"}},"type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[2688,-16],"id":"7b8e3beb-1d4c-497c-a478-1a3849761d78","name":"Send Telegram Alert","webhookId":"4b200223-982e-499d-ae2b-63af2f838dde","credentials":{"telegramApi":{"id":"iMWMXJHcvfQuhZEj","name":"telegram_fleetops"}}}],"connections":{"Webhook":{"main":[[{"node":"Parse Raw Body","type":"main","index":0}]]},"Parse Raw Body":{"main":[[{"node":"Validate Signature And Freshness","type":"main","index":0}]]},"Validate Signature And Freshness":{"main":[[{"node":"Validate Schema And Size","type":"main","index":0}]]},"Validate Schema And Size":{"main":[[{"node":"Check Existing Event","type":"main","index":0}]]},"Check Existing Event":{"main":[[{"node":"Is Duplicate?","type":"main","index":0}]]},"Is Duplicate?":{"main":[[{"node":"Log Duplicate Event","type":"main","index":0}],[{"node":"Insert Inbound Event","type":"main","index":0}]]},"Log Duplicate Event":{"main":[[{"node":"Respond to Webhook1","type":"main","index":0}]]},"Insert Inbound Event":{"main":[[{"node":"Compute Trip Update","type":"main","index":0}]]},"Compute Trip Update":{"main":[[{"node":"Is Delivery?","type":"main","index":0}]]},"Is Delivery?":{"main":[[{"node":"Update Trip Delivered","type":"main","index":0}],[{"node":"Update Trip In Transit","type":"main","index":0}]]},"Update Trip Delivered":{"main":[[{"node":"Prepare Notification","type":"main","index":0}]]},"Update Trip In Transit":{"main":[[{"node":"Prepare Notification","type":"main","index":0}]]},"Log Success":{"main":[[{"node":"Respond to Webhook2","type":"main","index":0}]]},"Prepare Notification":{"main":[[{"node":"Should Notify?","type":"main","index":0}]]},"Mark Event Processed":{"main":[[{"node":"Log Success","type":"main","index":0}]]},"Should Notify?":{"main":[[{"node":"Send Telegram Alert","type":"main","index":0}],[{"node":"Mark Event Processed","type":"main","index":0}]]},"Send Telegram Alert":{"main":[[{"node":"Mark Event Processed","type":"main","index":0}]]}},"settings":{"executionOrder":"v1","binaryMode":"separate"},"staticData":null,"meta":{"templateCredsSetupCompleted":true},"nodeGroups":[],"pinData":{},"versionId":"81d25e9f-be46-48ed-8704-9b5019c5d057","activeVersionId":"81d25e9f-be46-48ed-8704-9b5019c5d057","versionCounter":162,"triggerCount":1,"sourceWorkflowId":null,"tags":[],"shared":[{"updatedAt":"2026-09-26T21:17:07.083Z","createdAt":"2026-09-26T21:17:07.083Z","role":"workflow:owner","workflowId":"K85vZ7ZJUbqk6BjO","projectId":"XLSQ9BfHWp5ic67H","project":{"updatedAt":"2026-09-23T16:23:03.392Z","createdAt":"2026-09-23T16:14:37.793Z","id":"XLSQ9BfHWp5ic67H","name":"Yaretzi Castillo <yarecasst@gmail.com>","type":"personal","icon":null,"description":null,"customTelemetryTags":[],"creatorId":"3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"}}],"versionMetadata":{"name":"Version 81d25e9f","description":""}}
+{
+  "updatedAt": "2026-09-29T16:38:41.656Z",
+  "createdAt": "2026-09-26T21:17:07.083Z",
+  "id": "K85vZ7ZJUbqk6BjO",
+  "name": "flujo-a-track-and-trace",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ops/inbound-events",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -48
+      ],
+      "id": "7c832688-70d5-494a-8385-c5fea3ef9461",
+      "name": "Webhook",
+      "webhookId": "1509e88d-9395-430f-8d35-1f8bc6989f4e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBodyString = buffer.toString('utf8');\nconst rawBodyBase64 = buffer.toString('base64');\n\nconst item = $input.first().json;\nconst headers = item.headers || {};\n\nlet parsedBody;\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  throw new Error('Body no es JSON valido');\n}\n\nreturn [{\n  json: {\n    rawBodyString,\n    rawBodyBase64,\n    parsedBody,\n    signatureHeader: headers['x-samsara-signature'],\n    timestampHeader: headers['x-samsara-timestamp']\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        -48
+      ],
+      "id": "1521e032-f73c-4bb4-b206-20125fe53f31",
+      "name": "Parse Raw Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst item = $input.first().json;\nconst { rawBodyString, signatureHeader, timestampHeader } = item;\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Faltan headers de firma o timestamp');\n}\n\nconst secretBuffer = Buffer.from($env.SAMSARA_MOCK_SHARED_SECRET, 'base64');\nconst signedPayload = `v1:${timestampHeader}:${rawBodyString}`;\n\nconst hmac = crypto.createHmac('sha256', secretBuffer);\nhmac.update(signedPayload, 'utf8');\nconst expectedHex = hmac.digest('hex');\nconst receivedHex = (signatureHeader.split('=')[1] || '').trim();\n\nconst expectedBuf = Buffer.from(expectedHex, 'hex');\nconst receivedBuf = Buffer.from(receivedHex, 'hex');\n\nconst signatureValid = expectedBuf.length === receivedBuf.length\n  && crypto.timingSafeEqual(expectedBuf, receivedBuf);\n\nif (!signatureValid) {\n  throw new Error('Firma invalida');\n}\n\nconst nowSeconds = Math.floor(Date.now() / 1000);\nconst tsSeconds = parseInt(timestampHeader, 10);\nconst toleranceSeconds = 300;\n\nif (!Number.isFinite(tsSeconds) || Math.abs(nowSeconds - tsSeconds) > toleranceSeconds) {\n  throw new Error('Timestamp fuera de tolerancia (posible replay)');\n}\n\nreturn [{ json: item }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -48
+      ],
+      "id": "99b1535e-a243-4102-9b10-e6cb904496ec",
+      "name": "Validate Signature And Freshness"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst { rawBodyString, parsedBody } = item;\n\nconst MAX_BODY_BYTES = 10 * 1024;\nif (Buffer.byteLength(rawBodyString, 'utf8') > MAX_BODY_BYTES) {\n  throw new Error('Body excede el limite de tamano permitido');\n}\n\nconst isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;\nconst errors = [];\n\nif (!isNonEmptyString(parsedBody.eventId)) errors.push('eventId invalido');\nif (!isNonEmptyString(parsedBody.eventTime)) errors.push('eventTime invalido');\nif (!isNonEmptyString(parsedBody.eventType)) errors.push('eventType invalido');\n\nconst condition = parsedBody.data && Array.isArray(parsedBody.data.conditions)\n  ? parsedBody.data.conditions[0]\n  : null;\n\nif (!condition || condition.type !== 'vehicleGeofence') errors.push('tipo de condicion no soportado');\nif (!condition || !condition.vehicle || !isNonEmptyString(condition.vehicle.id)) errors.push('vehicle.id invalido');\nif (!condition || !condition.geofence || !isNonEmptyString(condition.geofence.id)) errors.push('geofence.id invalido');\n\nif (errors.length > 0) {\n  throw new Error(`Esquema invalido: ${errors.join('; ')}`);\n}\n\nreturn [{ json: item }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -48
+      ],
+      "id": "db0e20bb-7a0f-4308-b74b-e52cac6f4ef0",
+      "name": "Validate Schema And Size"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "   SELECT COUNT(*)::int AS cnt FROM ops.inbound_events WHERE event_id = $1;",
+        "options": {
+          "queryReplacement": "=={{ [$json.parsedBody.eventId] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        -48
+      ],
+      "id": "b7c26b34-1e6b-4688-b449-6dcb22c7c365",
+      "name": "Check Existing Event",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e02efe92-621f-4cb0-95dc-fbb6231857b1",
+              "leftValue": "={{ $json.cnt }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        -48
+      ],
+      "id": "428db2de-c167-4c50-a241-442fe5f885c7",
+      "name": "Is Duplicate?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "   INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic)\n   VALUES ('warn', 'flujo-a-track-and-trace', 'duplicate_event_ignored', $1, true);",
+        "options": {
+          "queryReplacement": "=={{ [$execution.id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1344,
+        -144
+      ],
+      "id": "a7701a64-d010-4268-99fd-3d5a7aafc098",
+      "name": "Log Duplicate Event",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"duplicate_ignored\" }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1568,
+        -144
+      ],
+      "id": "6bb22a41-4147-40a4-b301-cf9b4ce3663c",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.inbound_events (event_id, event_type, source, payload, status, is_synthetic)\nVALUES ($1, $2, 'samsara_mock', convert_from(decode($3, 'base64'), 'UTF8')::jsonb, 'received', true)\nON CONFLICT (event_id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ $('Parse Raw Body').item.json.parsedBody.eventId }},{{ $('Parse Raw Body').item.json.parsedBody.eventType }},{{ $('Parse Raw Body').item.json.rawBodyBase64 }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1344,
+        48
+      ],
+      "id": "fd0ab2c5-bb7e-413c-a26f-7fbf87017a9c",
+      "name": "Insert Inbound Event",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsedBody = $('Parse Raw Body').item.json.parsedBody;\nconst condition = parsedBody.data.conditions[0];\nconst vehicle = condition.vehicle;\nconst geofence = condition.geofence;\nconst eventType = parsedBody.eventType;\nconst eventTime = parsedBody.eventTime;\n\nconst tripId = vehicle.tripId;\nif (tripId === undefined || tripId === null) {\n  throw new Error('Evento sin tripId, no se puede procesar');\n}\n\nconst destinationGeofenceByTrip = {\n  7: 'geo-synth-02',\n  11: 'geo-synth-01'\n};\n\nconst isDelivery = eventType === 'GeofenceExit'\n  && geofence.id === destinationGeofenceByTrip[tripId];\n\nconst PROJECTED_ETA_OFFSET_MIN = 25;\nconst eventTimeDate = new Date(eventTime);\nconst projectedEta = new Date(eventTimeDate.getTime() + PROJECTED_ETA_OFFSET_MIN * 60000).toISOString();\n\nreturn [{\n  json: {\n    eventId: parsedBody.eventId,\n    tripId,\n    isDelivery,\n    eventTimeIso: eventTime,\n    projectedEtaIso: projectedEta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        48
+      ],
+      "id": "43417c68-8353-4122-8a18-5be455c5ba77",
+      "name": "Compute Trip Update"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9a111074-2004-4a32-9fb0-c1a0bcca8633",
+              "leftValue": "={{ $json.isDelivery }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        48
+      ],
+      "id": "1bc25fc6-f032-470d-a8de-c79d16e04e60",
+      "name": "Is Delivery?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "   UPDATE tmw.trips\n   SET status = 'delivered',\n       delivered_at = $2::timestamptz,\n       eta_deviation_min = ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - planned_eta)) / 60)::int,\n       updated_at = now()\n   WHERE trip_id = $1\nRETURNING trip_id, trip_ref, status, eta_deviation_min, delivered_at;",
+        "options": {
+          "queryReplacement": "=={{ $json.tripId }},{{ $json.eventTimeIso }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2016,
+        -48
+      ],
+      "id": "1c8174bb-9628-4b57-a91e-1120bc8c39d7",
+      "name": "Update Trip Delivered",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "   UPDATE tmw.trips\n   SET status = CASE WHEN status NOT IN ('delivered','cancelled') THEN 'in_transit' ELSE status END,\n       current_eta = $2::timestamptz,\n       eta_deviation_min = ROUND(EXTRACT(EPOCH FROM ($2::timestamptz - planned_eta)) / 60)::int,\n       updated_at = now()\n   WHERE trip_id = $1\nRETURNING trip_id, trip_ref, status, eta_deviation_min, current_eta;",
+        "options": {
+          "queryReplacement": "=={{ $json.tripId }},{{ $json.projectedEtaIso }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2016,
+        144
+      ],
+      "id": "14361e0d-3e5b-4098-a8aa-c3786f960c03",
+      "name": "Update Trip In Transit",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "    INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic)\n    VALUES ('info', 'flujo-a-track-and-trace', $1, $2, true);",
+        "options": {
+          "queryReplacement": "={{ $('Compute Trip Update').item.json.isDelivery ? 'trip_delivered' : 'trip_eta_updated' }},{{ $execution.id }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        3136,
+        48
+      ],
+      "id": "99f6bbc9-2c82-4c1f-a874-87547e7364c6",
+      "name": "Log Success",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"accepted\", tripId: $('Compute Trip Update').item.json.tripId, delivered: $('Compute Trip Update').item.json.isDelivery }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        3360,
+        48
+      ],
+      "id": "435c5fe0-507a-442d-8ab4-3fad1e48d951",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const updateResult = $input.first().json;\nconst context = $('Compute Trip Update').item.json;\n\nconst threshold = parseInt($env.ETA_DEVIATION_ALERT_THRESHOLD_MIN, 10);\nconst deviation = updateResult.eta_deviation_min;\nconst shouldNotify = context.isDelivery || Math.abs(deviation) >= threshold;\n\nconst message = context.isDelivery\n  ? `SINTETICO - Viaje ${updateResult.trip_ref} (ID ${updateResult.trip_id}) ENTREGADO. Desviacion ETA: ${deviation} min.`\n  : `SINTETICO - Viaje ${updateResult.trip_ref} (ID ${updateResult.trip_id}) en transito. Desviacion ETA proyectada: ${deviation} min.`;\n\nreturn [{\n  json: {\n    ...context,\n    etaDeviationMin: deviation,\n    tripRef: updateResult.trip_ref,\n    shouldNotify,\n    notificationMessage: message\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        48
+      ],
+      "id": "dd13bf19-1ae2-47ad-a729-7790e72c46bf",
+      "name": "Prepare Notification"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "    UPDATE ops.inbound_events\n    SET status = 'processed', processed_at = now(), trip_id = $2\n    WHERE event_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Compute Trip Update').item.json.eventId }},{{ $('Compute Trip Update').item.json.tripId }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2928,
+        48
+      ],
+      "id": "6f0e1368-df4e-4cd7-9dd4-33588702de33",
+      "name": "Mark Event Processed",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9dd886ac-6dae-49a2-a983-afb3379b7017",
+              "leftValue": "={{ $json.shouldNotify }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2464,
+        48
+      ],
+      "id": "644f3d30-36aa-4f48-96fa-af9bb50bd088",
+      "name": "Should Notify?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "={{ $json.notificationMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2688,
+        -16
+      ],
+      "id": "7b8e3beb-1d4c-497c-a478-1a3849761d78",
+      "name": "Send Telegram Alert",
+      "webhookId": "4b200223-982e-499d-ae2b-63af2f838dde",
+      "credentials": {
+        "telegramApi": {
+          "id": "iMWMXJHcvfQuhZEj",
+          "name": "telegram_fleetops"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Raw Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Raw Body": {
+      "main": [
+        [
+          {
+            "node": "Validate Signature And Freshness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Signature And Freshness": {
+      "main": [
+        [
+          {
+            "node": "Validate Schema And Size",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Schema And Size": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Event": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Log Duplicate Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Inbound Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Duplicate Event": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Inbound Event": {
+      "main": [
+        [
+          {
+            "node": "Compute Trip Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Trip Update": {
+      "main": [
+        [
+          {
+            "node": "Is Delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Delivery?": {
+      "main": [
+        [
+          {
+            "node": "Update Trip Delivered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Trip In Transit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Trip Delivered": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Trip In Transit": {
+      "main": [
+        [
+          {
+            "node": "Prepare Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Success": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Notification": {
+      "main": [
+        [
+          {
+            "node": "Should Notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Event Processed": {
+      "main": [
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Notify?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Event Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Mark Event Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "81d25e9f-be46-48ed-8704-9b5019c5d057",
+  "activeVersionId": "81d25e9f-be46-48ed-8704-9b5019c5d057",
+  "versionCounter": 162,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-09-26T21:17:07.083Z",
+      "createdAt": "2026-09-26T21:17:07.083Z",
+      "role": "workflow:owner",
+      "workflowId": "K85vZ7ZJUbqk6BjO",
+      "projectId": "XLSQ9BfHWp5ic67H",
+      "project": {
+        "updatedAt": "2026-09-23T16:23:03.392Z",
+        "createdAt": "2026-09-23T16:14:37.793Z",
+        "id": "XLSQ9BfHWp5ic67H",
+        "name": "Yaretzi Castillo <yarecasst@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version 81d25e9f",
+    "description": ""
+  }
+}

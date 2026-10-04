@@ -1,0 +1,271 @@
+{
+  "updatedAt": "2026-10-04T02:09:18.226Z",
+  "createdAt": "2026-10-04T01:48:33.126Z",
+  "id": "flujoBBillingRec01",
+  "name": "flujo-b-billing-reconciliation",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 7
+            }
+          ]
+        }
+      },
+      "id": "n2",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH eligible AS (\n  SELECT t.trip_id, o.customer_code, o.agreed_amount, o.currency\n  FROM tmw.trips t\n  JOIN tmw.orders o ON o.order_id = t.order_id\n  WHERE t.status = 'delivered'\n    AND NOT EXISTS (SELECT 1 FROM sage.invoices i WHERE i.trip_id = t.trip_id)\n)\nINSERT INTO sage.invoices\n  (invoice_ref, trip_id, customer_code, amount, currency, status, reconciliation_status, is_synthetic)\nSELECT\n  'INV-' || (3000 + (SELECT coalesce(max(invoice_id), 0) FROM sage.invoices) + row_number() OVER (ORDER BY e.trip_id)),\n  e.trip_id, e.customer_code, e.agreed_amount, e.currency, 'draft', 'pending', true\nFROM eligible e\nON CONFLICT (trip_id) DO NOTHING\nRETURNING invoice_id, invoice_ref, trip_id, amount;",
+        "options": {}
+      },
+      "id": "n3",
+      "name": "Create Draft Invoices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        304,
+        112
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH pending AS (\n  SELECT invoice_id, invoice_ref, customer_code, amount, currency\n  FROM sage.invoices\n  WHERE reconciliation_status = 'pending' AND status = 'draft'\n  FOR UPDATE\n),\ncand AS (\n  SELECT p.invoice_id,\n         count(r.receivable_id) AS n_cand,\n         min(r.receivable_id) AS first_rid,\n         array_agg(r.receivable_id ORDER BY r.receivable_id) FILTER (WHERE r.receivable_id IS NOT NULL) AS rids,\n         max(r.amount_paid) AS paid\n  FROM pending p\n  LEFT JOIN sage.receivables r\n    ON r.invoice_id IS NULL\n   AND r.status IN ('open', 'partial')\n   AND r.customer_code = p.customer_code\n   AND r.currency = p.currency\n   AND r.amount_due = p.amount\n  GROUP BY p.invoice_id\n),\nclassified AS (\n  SELECT p.invoice_id, p.invoice_ref, p.customer_code, p.amount, p.currency,\n         c.n_cand, c.first_rid, c.rids, c.paid,\n         CASE WHEN c.n_cand = 0 THEN 'unmatched'\n              WHEN c.n_cand > 1 THEN 'ambiguous'\n              WHEN c.paid > 0 THEN 'partial'\n              ELSE 'matched' END AS outcome\n  FROM pending p\n  JOIN cand c ON c.invoice_id = p.invoice_id\n),\nupd_inv AS (\n  UPDATE sage.invoices i\n  SET reconciliation_status = c.outcome,\n      reconciled_at = CASE WHEN c.outcome = 'matched' THEN now() END\n  FROM classified c\n  WHERE i.invoice_id = c.invoice_id\n  RETURNING i.invoice_id\n),\nlink AS (\n  UPDATE sage.receivables r\n  SET invoice_id = c.invoice_id\n  FROM classified c\n  WHERE c.outcome = 'matched' AND r.receivable_id = c.first_rid\n  RETURNING r.receivable_id\n),\nrq AS (\n  INSERT INTO ops.review_queue (source, ref_type, ref_id, reason, details, status, is_synthetic)\n  SELECT 'reconciliation', 'invoice', c.invoice_ref,\n         CASE c.outcome WHEN 'unmatched' THEN 'no_match'\n                        WHEN 'ambiguous' THEN 'ambiguous_match'\n                        ELSE 'partial_payment' END,\n         jsonb_build_object(\n           'invoice_id', c.invoice_id,\n           'customer_code', c.customer_code,\n           'amount', c.amount,\n           'currency', c.currency,\n           'candidate_receivable_ids', coalesce(to_jsonb(c.rids), '[]'::jsonb),\n           'amount_paid', c.paid),\n         'pending', true\n  FROM classified c\n  WHERE c.outcome <> 'matched'\n    AND NOT EXISTS (\n      SELECT 1 FROM ops.review_queue q\n      WHERE q.source = 'reconciliation' AND q.ref_type = 'invoice'\n        AND q.ref_id = c.invoice_ref AND q.status = 'pending')\n  RETURNING review_id\n)\nSELECT\n  (SELECT count(*) FROM classified) AS processed,\n  (SELECT count(*) FROM classified WHERE outcome = 'matched') AS matched,\n  (SELECT count(*) FROM classified WHERE outcome = 'partial') AS partial,\n  (SELECT count(*) FROM classified WHERE outcome = 'ambiguous') AS ambiguous,\n  (SELECT count(*) FROM classified WHERE outcome = 'unmatched') AS unmatched,\n  (SELECT count(*) FROM rq) AS queued,\n  (SELECT count(*) FROM link) AS linked,\n  (SELECT count(*) FROM upd_inv) AS updated;",
+        "options": {}
+      },
+      "id": "n4",
+      "name": "Reconcile Invoices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        592,
+        112
+      ],
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic) VALUES ('info', 'flujo-b-billing-reconciliation', 'reconciliation_completed', $1, true) RETURNING log_id;",
+        "options": {
+          "queryReplacement": "={{ $execution.id }}"
+        }
+      },
+      "id": "n5",
+      "name": "Log Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        864,
+        112
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ Number($('Reconcile Invoices').first().json.queued) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n6",
+      "name": "Has Review Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1152,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=Flujo B conciliacion: {{ $('Reconcile Invoices').first().json.queued }} items nuevos en revision (parciales {{ $('Reconcile Invoices').first().json.partial }}, ambiguas {{ $('Reconcile Invoices').first().json.ambiguous }}, sin coincidencia {{ $('Reconcile Invoices').first().json.unmatched }}). Revisar la cola ops.review_queue.",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        80
+      ],
+      "id": "2ae6b29c-fb63-4a16-9e30-ee6e36e30eac",
+      "name": "Send Review Alert",
+      "webhookId": "4b200223-982e-499d-ae2b-63af2f838dde",
+      "credentials": {
+        "telegramApi": {
+          "id": "iMWMXJHcvfQuhZEj",
+          "name": "telegram_fleetops"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Draft Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "Create Draft Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Draft Invoices": {
+      "main": [
+        [
+          {
+            "node": "Reconcile Invoices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconcile Invoices": {
+      "main": [
+        [
+          {
+            "node": "Log Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Run": {
+      "main": [
+        [
+          {
+            "node": "Has Review Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Review Items?": {
+      "main": [
+        [
+          {
+            "node": "Send Review Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "b9df4074-f153-4263-a8b3-7f0d8f575cb8",
+  "activeVersionId": null,
+  "versionCounter": 12,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-10-04T01:48:33.126Z",
+      "createdAt": "2026-10-04T01:48:33.126Z",
+      "role": "workflow:owner",
+      "workflowId": "flujoBBillingRec01",
+      "projectId": "XLSQ9BfHWp5ic67H",
+      "project": {
+        "updatedAt": "2026-09-23T16:23:03.392Z",
+        "createdAt": "2026-09-23T16:14:37.793Z",
+        "id": "XLSQ9BfHWp5ic67H",
+        "name": "Yaretzi Castillo <yarecasst@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}

@@ -1,0 +1,222 @@
+{
+  "updatedAt": "2026-10-04T02:34:49.165Z",
+  "createdAt": "2026-10-04T02:31:52.555Z",
+  "id": "flujoCDailyReport01",
+  "name": "flujo-c-daily-report",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "n2",
+      "name": "Daily Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH d AS (\n  SELECT t.trip_id, t.trip_ref, t.status, o.customer_code, o.currency, o.agreed_amount,\n         o.delivery_due, t.delivered_at, t.current_eta, t.wait_minutes\n  FROM tmw.trips t\n  JOIN tmw.orders o ON o.order_id = t.order_id\n),\ndelivered AS (\n  SELECT *, (delivered_at <= delivery_due) AS on_time FROM d WHERE status = 'delivered'\n),\nlate AS (\n  SELECT trip_ref, customer_code, 'entregado_tarde' AS tipo, status, delivery_due,\n         delivered_at AS fecha_real,\n         round(extract(epoch FROM (delivered_at - delivery_due)) / 60)::int AS minutos_tarde\n  FROM delivered WHERE NOT on_time\n  UNION ALL\n  SELECT trip_ref, customer_code, 'en_curso_retrasado', status, delivery_due,\n         current_eta,\n         round(extract(epoch FROM (current_eta - delivery_due)) / 60)::int\n  FROM d\n  WHERE status IN ('dispatched', 'in_transit', 'delayed') AND current_eta > delivery_due\n),\nuninv AS (\n  SELECT d.trip_ref, d.customer_code, d.agreed_amount AS monto, d.currency AS moneda,\n         d.delivered_at AS entregado, i.invoice_ref,\n         coalesce(i.status, 'sin_factura') AS estado_factura,\n         floor(extract(epoch FROM (now() - d.delivered_at)) / 86400)::int AS dias_desde_entrega\n  FROM delivered d\n  LEFT JOIN sage.invoices i ON i.trip_id = d.trip_id\n  WHERE i.invoice_id IS NULL OR i.status = 'draft'\n),\nwait_by AS (\n  SELECT customer_code, count(*) AS viajes,\n         round(avg(wait_minutes), 1) AS espera_prom_min,\n         max(wait_minutes) AS espera_max_min,\n         sum(wait_minutes) AS espera_total_min\n  FROM delivered GROUP BY customer_code\n)\nSELECT\n  (SELECT json_build_object(\n      'entregas_totales', count(*),\n      'entregas_a_tiempo', count(*) FILTER (WHERE on_time),\n      'pct_a_tiempo', round(100.0 * count(*) FILTER (WHERE on_time) / nullif(count(*), 0), 1),\n      'viajes_tarde', (SELECT count(*) FROM late),\n      'entregas_sin_facturar', (SELECT count(*) FROM uninv),\n      'espera_prom_min', round(avg(wait_minutes), 1),\n      'espera_max_min', max(wait_minutes))\n   FROM delivered) AS resumen,\n  (SELECT coalesce(json_agg(l ORDER BY l.minutos_tarde DESC), '[]'::json) FROM late l) AS tarde,\n  (SELECT coalesce(json_agg(u ORDER BY u.entregado), '[]'::json) FROM uninv u) AS sin_facturar,\n  (SELECT coalesce(json_agg(w ORDER BY w.customer_code), '[]'::json) FROM wait_by w) AS espera_cliente;",
+        "options": {}
+      },
+      "id": "n3",
+      "name": "Build Report Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        304,
+        112
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const XLSX = require('@e965/xlsx');\nconst r = $input.first().json;\nconst s = r.resumen;\nconst wb = XLSX.utils.book_new();\n\nconst resumen = [\n  ['Metrica', 'Valor'],\n  ['Entregas totales', s.entregas_totales],\n  ['Entregas a tiempo', s.entregas_a_tiempo],\n  ['Porcentaje a tiempo', s.pct_a_tiempo],\n  ['Viajes tarde', s.viajes_tarde],\n  ['Entregas sin facturar', s.entregas_sin_facturar],\n  ['Espera promedio (min)', s.espera_prom_min],\n  ['Espera maxima (min)', s.espera_max_min],\n  ['Generado (UTC)', new Date().toISOString()]\n];\nconst wsRes = XLSX.utils.aoa_to_sheet(resumen);\nwsRes['!cols'] = [{ wch: 26 }, { wch: 28 }];\nXLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');\n\nconst add = (name, rows) => {\n  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ info: 'Sin registros' }]);\n  ws['!cols'] = Array.from({ length: 8 }, () => ({ wch: 22 }));\n  XLSX.utils.book_append_sheet(wb, ws, name);\n};\nadd('Viajes tarde', r.tarde);\nadd('Sin facturar', r.sin_facturar);\nadd('Espera por cliente', r.espera_cliente);\n\nconst buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });\nconst fileName = 'reporte-diario-' + new Date().toISOString().slice(0, 10) + '.xlsx';\nconst bin = await this.helpers.prepareBinaryData(\n  buf, fileName, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');\nreturn [{ json: { fileName: fileName, stats: s }, binary: { data: bin } }];"
+      },
+      "id": "n4",
+      "name": "Build Workbook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic) VALUES ('info', 'flujo-c-daily-report', 'daily_report_generated', $1, true) RETURNING log_id;",
+        "options": {
+          "queryReplacement": "={{ $execution.id }}"
+        }
+      },
+      "id": "n5",
+      "name": "Log Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        864,
+        208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "=Reporte diario Flujo C: {{ $json.stats.pct_a_tiempo }}% a tiempo, {{ $json.stats.viajes_tarde }} viajes tarde, {{ $json.stats.entregas_sin_facturar }} entregas sin facturar.",
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        880,
+        16
+      ],
+      "id": "9d487a7d-673a-4d05-ad7a-592c1052aacb",
+      "name": "Send Report",
+      "webhookId": "4b200223-982e-499d-ae2b-63af2f838dde",
+      "credentials": {
+        "telegramApi": {
+          "id": "iMWMXJHcvfQuhZEj",
+          "name": "telegram_fleetops"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule": {
+      "main": [
+        [
+          {
+            "node": "Build Report Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report Data": {
+      "main": [
+        [
+          {
+            "node": "Build Workbook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Workbook": {
+      "main": [
+        [
+          {
+            "node": "Log Run",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": {
+    "node:Daily Schedule": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "a2c9c547-38dc-4773-9f5b-f287b6e61812",
+  "activeVersionId": "a2c9c547-38dc-4773-9f5b-f287b6e61812",
+  "versionCounter": 11,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-10-04T02:31:52.555Z",
+      "createdAt": "2026-10-04T02:31:52.555Z",
+      "role": "workflow:owner",
+      "workflowId": "flujoCDailyReport01",
+      "projectId": "XLSQ9BfHWp5ic67H",
+      "project": {
+        "updatedAt": "2026-09-23T16:23:03.392Z",
+        "createdAt": "2026-09-23T16:14:37.793Z",
+        "id": "XLSQ9BfHWp5ic67H",
+        "name": "Yaretzi Castillo <yarecasst@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version a2c9c547",
+    "description": ""
+  }
+}
