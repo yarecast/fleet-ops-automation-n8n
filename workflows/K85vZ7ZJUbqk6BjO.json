@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-29T16:38:41.656Z",
+  "updatedAt": "2026-10-15T01:09:24.853Z",
   "createdAt": "2026-09-26T21:17:07.083Z",
   "id": "K85vZ7ZJUbqk6BjO",
   "name": "flujo-a-track-and-trace",
@@ -20,7 +20,7 @@
       "typeVersion": 2.1,
       "position": [
         0,
-        -48
+        48
       ],
       "id": "7c832688-70d5-494a-8385-c5fea3ef9461",
       "name": "Webhook",
@@ -28,39 +28,39 @@
     },
     {
       "parameters": {
-        "jsCode": "const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBodyString = buffer.toString('utf8');\nconst rawBodyBase64 = buffer.toString('base64');\n\nconst item = $input.first().json;\nconst headers = item.headers || {};\n\nlet parsedBody;\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  throw new Error('Body no es JSON valido');\n}\n\nreturn [{\n  json: {\n    rawBodyString,\n    rawBodyBase64,\n    parsedBody,\n    signatureHeader: headers['x-samsara-signature'],\n    timestampHeader: headers['x-samsara-timestamp']\n  }\n}];"
+        "jsCode": "const item = $input.first().json;\nconst reject = (code, event) => [{ json: { reject: { code: code, event: event } } }];\nlet buffer;\ntry {\n  buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n} catch (e) {\n  return reject(400, 'inbound_rejected_body');\n}\nif (buffer.length > 10 * 1024) return reject(400, 'inbound_rejected_size');\nconst rawBodyString = buffer.toString('utf8');\nconst rawBodyBase64 = buffer.toString('base64');\nconst headers = item.headers || {};\nlet parsedBody;\ntry {\n  parsedBody = JSON.parse(rawBodyString);\n} catch (e) {\n  return reject(400, 'inbound_rejected_body');\n}\nreturn [{ json: {\n  rawBodyString,\n  rawBodyBase64,\n  parsedBody,\n  signatureHeader: headers['x-samsara-signature'],\n  timestampHeader: headers['x-samsara-timestamp']\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         224,
-        -48
+        48
       ],
       "id": "1521e032-f73c-4bb4-b206-20125fe53f31",
       "name": "Parse Raw Body"
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst item = $input.first().json;\nconst { rawBodyString, signatureHeader, timestampHeader } = item;\n\nif (!signatureHeader || !timestampHeader) {\n  throw new Error('Faltan headers de firma o timestamp');\n}\n\nconst secretBuffer = Buffer.from($env.SAMSARA_MOCK_SHARED_SECRET, 'base64');\nconst signedPayload = `v1:${timestampHeader}:${rawBodyString}`;\n\nconst hmac = crypto.createHmac('sha256', secretBuffer);\nhmac.update(signedPayload, 'utf8');\nconst expectedHex = hmac.digest('hex');\nconst receivedHex = (signatureHeader.split('=')[1] || '').trim();\n\nconst expectedBuf = Buffer.from(expectedHex, 'hex');\nconst receivedBuf = Buffer.from(receivedHex, 'hex');\n\nconst signatureValid = expectedBuf.length === receivedBuf.length\n  && crypto.timingSafeEqual(expectedBuf, receivedBuf);\n\nif (!signatureValid) {\n  throw new Error('Firma invalida');\n}\n\nconst nowSeconds = Math.floor(Date.now() / 1000);\nconst tsSeconds = parseInt(timestampHeader, 10);\nconst toleranceSeconds = 300;\n\nif (!Number.isFinite(tsSeconds) || Math.abs(nowSeconds - tsSeconds) > toleranceSeconds) {\n  throw new Error('Timestamp fuera de tolerancia (posible replay)');\n}\n\nreturn [{ json: item }];"
+        "jsCode": "const crypto = require('crypto');\nconst item = $input.first().json;\nif (item.reject) return [{ json: item }];\nconst reject = (code, event) => [{ json: { reject: { code: code, event: event } } }];\nconst { rawBodyString, signatureHeader, timestampHeader } = item;\nif (typeof signatureHeader !== 'string' || typeof timestampHeader !== 'string' || !signatureHeader || !timestampHeader) {\n  return reject(401, 'inbound_rejected_signature');\n}\nconst secret = $env.SAMSARA_MOCK_SHARED_SECRET;\nif (!secret) return reject(500, 'inbound_rejected_config');\nconst secretBuffer = Buffer.from(secret, 'base64');\nconst signedPayload = 'v1:' + timestampHeader + ':' + rawBodyString;\nconst hmac = crypto.createHmac('sha256', secretBuffer);\nhmac.update(signedPayload, 'utf8');\nconst expectedBuf = Buffer.from(hmac.digest('hex'), 'hex');\nconst receivedHex = (signatureHeader.split('=')[1] || '').trim();\nconst receivedBuf = Buffer.from(receivedHex, 'hex');\nconst signatureValid = expectedBuf.length === receivedBuf.length && crypto.timingSafeEqual(expectedBuf, receivedBuf);\nif (!signatureValid) return reject(401, 'inbound_rejected_signature');\nconst nowSeconds = Math.floor(Date.now() / 1000);\nconst tsSeconds = parseInt(timestampHeader, 10);\nif (!Number.isFinite(tsSeconds) || Math.abs(nowSeconds - tsSeconds) > 300) {\n  return reject(401, 'inbound_rejected_replay');\n}\nreturn [{ json: item }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         448,
-        -48
+        48
       ],
       "id": "99b1535e-a243-4102-9b10-e6cb904496ec",
       "name": "Validate Signature And Freshness"
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst { rawBodyString, parsedBody } = item;\n\nconst MAX_BODY_BYTES = 10 * 1024;\nif (Buffer.byteLength(rawBodyString, 'utf8') > MAX_BODY_BYTES) {\n  throw new Error('Body excede el limite de tamano permitido');\n}\n\nconst isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;\nconst errors = [];\n\nif (!isNonEmptyString(parsedBody.eventId)) errors.push('eventId invalido');\nif (!isNonEmptyString(parsedBody.eventTime)) errors.push('eventTime invalido');\nif (!isNonEmptyString(parsedBody.eventType)) errors.push('eventType invalido');\n\nconst condition = parsedBody.data && Array.isArray(parsedBody.data.conditions)\n  ? parsedBody.data.conditions[0]\n  : null;\n\nif (!condition || condition.type !== 'vehicleGeofence') errors.push('tipo de condicion no soportado');\nif (!condition || !condition.vehicle || !isNonEmptyString(condition.vehicle.id)) errors.push('vehicle.id invalido');\nif (!condition || !condition.geofence || !isNonEmptyString(condition.geofence.id)) errors.push('geofence.id invalido');\n\nif (errors.length > 0) {\n  throw new Error(`Esquema invalido: ${errors.join('; ')}`);\n}\n\nreturn [{ json: item }];"
+        "jsCode": "const item = $input.first().json;\nif (item.reject) return [{ json: item }];\nconst reject = (code, event) => [{ json: { reject: { code: code, event: event } } }];\nconst parsedBody = item.parsedBody;\nif (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {\n  return reject(400, 'inbound_rejected_schema');\n}\nconst isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;\nconst errors = [];\nif (!isNonEmptyString(parsedBody.eventId)) errors.push('eventId');\nif (!isNonEmptyString(parsedBody.eventTime)) errors.push('eventTime');\nif (!isNonEmptyString(parsedBody.eventType)) errors.push('eventType');\nconst condition = parsedBody.data && Array.isArray(parsedBody.data.conditions) ? parsedBody.data.conditions[0] : null;\nif (!condition || condition.type !== 'vehicleGeofence') errors.push('condition');\nif (!condition || !condition.vehicle || !isNonEmptyString(condition.vehicle.id)) errors.push('vehicle');\nif (!condition || !condition.geofence || !isNonEmptyString(condition.geofence.id)) errors.push('geofence');\nif (errors.length > 0) return reject(400, 'inbound_rejected_schema');\nreturn [{ json: item }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         672,
-        -48
+        48
       ],
       "id": "db0e20bb-7a0f-4308-b74b-e52cac6f4ef0",
       "name": "Validate Schema And Size"
@@ -76,11 +76,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        896,
+        1120,
         -48
       ],
       "id": "b7c26b34-1e6b-4688-b449-6dcb22c7c365",
       "name": "Check Existing Event",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -115,7 +118,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1120,
+        1344,
         -48
       ],
       "id": "428db2de-c167-4c50-a241-442fe5f885c7",
@@ -132,11 +135,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        1344,
+        1568,
         -144
       ],
       "id": "a7701a64-d010-4268-99fd-3d5a7aafc098",
       "name": "Log Duplicate Event",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -153,7 +159,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        1568,
+        1792,
         -144
       ],
       "id": "6bb22a41-4147-40a4-b301-cf9b4ce3663c",
@@ -170,11 +176,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        1344,
+        1568,
         48
       ],
       "id": "fd0ab2c5-bb7e-413c-a26f-7fbf87017a9c",
       "name": "Insert Inbound Event",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -189,7 +198,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
+        1792,
         48
       ],
       "id": "43417c68-8353-4122-8a18-5be455c5ba77",
@@ -223,7 +232,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1792,
+        2016,
         48
       ],
       "id": "1bc25fc6-f032-470d-a8de-c79d16e04e60",
@@ -240,11 +249,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        2016,
+        2240,
         -48
       ],
       "id": "1c8174bb-9628-4b57-a91e-1120bc8c39d7",
       "name": "Update Trip Delivered",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -263,11 +275,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        2016,
+        2240,
         144
       ],
       "id": "14361e0d-3e5b-4098-a8aa-c3786f960c03",
       "name": "Update Trip In Transit",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -286,11 +301,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        3136,
+        3360,
         48
       ],
       "id": "99f6bbc9-2c82-4c1f-a874-87547e7364c6",
       "name": "Log Success",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -307,7 +325,7 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        3360,
+        3584,
         48
       ],
       "id": "435c5fe0-507a-442d-8ab4-3fad1e48d951",
@@ -320,7 +338,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2240,
+        2464,
         48
       ],
       "id": "dd13bf19-1ae2-47ad-a729-7790e72c46bf",
@@ -337,11 +355,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [
-        2928,
+        3136,
         48
       ],
       "id": "6f0e1368-df4e-4cd7-9dd4-33588702de33",
       "name": "Mark Event Processed",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "postgres": {
           "id": "8xkpcIXbV0kg372k",
@@ -377,7 +398,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2464,
+        2688,
         48
       ],
       "id": "644f3d30-36aa-4f48-96fa-af9bb50bd088",
@@ -394,18 +415,100 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2688,
+        2912,
         -16
       ],
       "id": "7b8e3beb-1d4c-497c-a478-1a3849761d78",
       "name": "Send Telegram Alert",
       "webhookId": "4b200223-982e-499d-ae2b-63af2f838dde",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "credentials": {
         "telegramApi": {
           "id": "iMWMXJHcvfQuhZEj",
           "name": "telegram_fleetops"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !$json.reject }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a-harden-1",
+      "name": "Event Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic) VALUES ('warn', 'flujo-a-track-and-trace', $1, $2, true);",
+        "options": {
+          "queryReplacement": "={{ [$json.reject.event, String($execution.id)] }}"
+        }
+      },
+      "id": "a-harden-2",
+      "name": "Log Reject",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1120,
+        144
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: ({ 400: 'Solicitud invalida', 401: 'No autorizado' })[$('Event Valid?').first().json.reject.code] || 'Error interno' }) }}",
+        "options": {
+          "responseCode": "={{ $('Event Valid?').first().json.reject.code }}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1344,
+        144
+      ],
+      "id": "a-harden-3",
+      "name": "Reject Reply"
     }
   ],
   "connections": {
@@ -446,7 +549,7 @@
       "main": [
         [
           {
-            "node": "Check Existing Event",
+            "node": "Event Valid?",
             "type": "main",
             "index": 0
           }
@@ -616,11 +719,44 @@
           }
         ]
       ]
+    },
+    "Event Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Reject": {
+      "main": [
+        [
+          {
+            "node": "Reject Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "globalErrorHandler01",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
   "staticData": null,
   "meta": {
@@ -628,9 +764,9 @@
   },
   "nodeGroups": [],
   "pinData": {},
-  "versionId": "81d25e9f-be46-48ed-8704-9b5019c5d057",
-  "activeVersionId": "81d25e9f-be46-48ed-8704-9b5019c5d057",
-  "versionCounter": 162,
+  "versionId": "b9369c09-7e91-4ebb-aa96-0cc64e4d1df8",
+  "activeVersionId": "b9369c09-7e91-4ebb-aa96-0cc64e4d1df8",
+  "versionCounter": 166,
   "triggerCount": 1,
   "sourceWorkflowId": null,
   "tags": [],
@@ -655,7 +791,7 @@
     }
   ],
   "versionMetadata": {
-    "name": "Version 81d25e9f",
+    "name": "Version b9369c09",
     "description": ""
   }
 }

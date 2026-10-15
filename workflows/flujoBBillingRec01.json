@@ -1,10 +1,10 @@
 {
-  "updatedAt": "2026-10-04T02:09:18.226Z",
+  "updatedAt": "2026-10-15T00:37:04.419Z",
   "createdAt": "2026-10-04T01:48:33.126Z",
   "id": "flujoBBillingRec01",
   "name": "flujo-b-billing-reconciliation",
   "description": null,
-  "active": false,
+  "active": true,
   "isArchived": false,
   "nodes": [
     {
@@ -57,7 +57,10 @@
           "id": "8xkpcIXbV0kg372k",
           "name": "fleetops_app"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -79,7 +82,10 @@
           "id": "8xkpcIXbV0kg372k",
           "name": "fleetops_app"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -102,7 +108,10 @@
           "id": "8xkpcIXbV0kg372k",
           "name": "fleetops_app"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -159,7 +168,10 @@
           "id": "iMWMXJHcvfQuhZEj",
           "name": "telegram_fleetops"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -232,16 +244,29 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "globalErrorHandler01",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "staticData": null,
+  "staticData": {
+    "node:Daily Schedule": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
   "meta": null,
   "nodeGroups": [],
   "pinData": {},
-  "versionId": "b9df4074-f153-4263-a8b3-7f0d8f575cb8",
-  "activeVersionId": null,
-  "versionCounter": 12,
-  "triggerCount": 0,
+  "versionId": "e7a4ccf7-c90b-441d-ac0e-7a62e5a6a328",
+  "activeVersionId": "e7a4ccf7-c90b-441d-ac0e-7a62e5a6a328",
+  "versionCounter": 14,
+  "triggerCount": 1,
   "sourceWorkflowId": null,
   "tags": [],
   "shared": [
@@ -265,7 +290,7 @@
     }
   ],
   "versionMetadata": {
-    "name": null,
-    "description": null
+    "name": "Version e7a4ccf7",
+    "description": ""
   }
 }

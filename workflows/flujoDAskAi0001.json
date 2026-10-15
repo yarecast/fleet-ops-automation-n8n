@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-04T20:00:22.956Z",
+  "updatedAt": "2026-10-15T00:37:43.911Z",
   "createdAt": "2026-10-04T19:45:56.718Z",
   "id": "flujoDAskAi0001",
   "name": "flujo-d-ask",
@@ -87,7 +87,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.ollamaRequest) }}",
+        "jsonBody": "={{ JSON.stringify($('Validate Request').first().json.ollamaRequest) }}",
         "options": {
           "timeout": 120000
         }
@@ -162,7 +162,10 @@
           "id": "fleetopsReadonly01",
           "name": "postgres_fleetops_readonly"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     },
     {
       "id": "d8",
@@ -215,6 +218,58 @@
           "id": "8xkpcIXbV0kg372k",
           "name": "fleetops_app"
         }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "d-retry-1",
+      "name": "LLM Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1020,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ !!$json.error && $runIndex < 2 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d-retry-2",
+      "name": "Backoff Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1020,
+        500
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ 2 ** ($runIndex + 1) }}",
+        "unit": "seconds"
       }
     }
   ],
@@ -263,7 +318,7 @@
       "main": [
         [
           {
-            "node": "Validate Intent",
+            "node": "LLM Failed?",
             "type": "main",
             "index": 0
           }
@@ -331,18 +386,52 @@
           }
         ]
       ]
+    },
+    "LLM Failed?": {
+      "main": [
+        [
+          {
+            "node": "Backoff Wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backoff Wait": {
+      "main": [
+        [
+          {
+            "node": "Ask Ollama",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "globalErrorHandler01",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
   "staticData": null,
   "meta": null,
   "nodeGroups": [],
   "pinData": null,
-  "versionId": "a6dbcb14-8208-43d4-8cd3-9123714e8db9",
-  "activeVersionId": "a6dbcb14-8208-43d4-8cd3-9123714e8db9",
-  "versionCounter": 2,
+  "versionId": "f75360e5-bd0b-4a81-8e3d-0d6e29ad9846",
+  "activeVersionId": "f75360e5-bd0b-4a81-8e3d-0d6e29ad9846",
+  "versionCounter": 5,
   "triggerCount": 1,
   "sourceWorkflowId": null,
   "tags": [],

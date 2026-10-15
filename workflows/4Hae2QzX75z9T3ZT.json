@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-25T21:54:00.214Z",
+  "updatedAt": "2026-10-15T00:38:08.879Z",
   "createdAt": "2026-09-25T21:46:40.692Z",
   "id": "4Hae2QzX75z9T3ZT",
   "name": "samsara-mock-locations",
@@ -76,7 +76,11 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "globalErrorHandler01",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
   "staticData": null,
   "meta": null,
@@ -84,7 +88,7 @@
   "pinData": {},
   "versionId": "ed29e68c-6d8c-49fb-9c28-3d267cdaad28",
   "activeVersionId": "ed29e68c-6d8c-49fb-9c28-3d267cdaad28",
-  "versionCounter": 8,
+  "versionCounter": 9,
   "triggerCount": 1,
   "sourceWorkflowId": null,
   "tags": [],

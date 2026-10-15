@@ -1,0 +1,141 @@
+{
+  "updatedAt": "2026-10-15T01:19:01.702Z",
+  "createdAt": "2026-10-15T01:19:01.702Z",
+  "id": "opsDataRetention01",
+  "name": "ops-data-retention",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "ret-0001",
+      "name": "Manual Trigger",
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        0,
+        -100
+      ],
+      "typeVersion": 1
+    },
+    {
+      "id": "ret-0002",
+      "name": "Daily Schedule 03:00",
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 3,
+              "daysInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        0,
+        100
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "waitBetweenTries": 2000,
+      "id": "ret-0003",
+      "type": "n8n-nodes-base.postgres",
+      "credentials": {
+        "postgres": {
+          "id": "8xkpcIXbV0kg372k",
+          "name": "fleetops_app"
+        }
+      },
+      "parameters": {
+        "query": "WITH q AS (\n  UPDATE ops.review_queue SET details = details - 'question'\n  WHERE details->>'question' IS NOT NULL AND (status <> 'pending' OR created_at < now() - interval '14 days')\n  RETURNING 1\n), l AS (\n  DELETE FROM ops.logs WHERE logged_at < now() - interval '90 days' RETURNING 1\n), ins AS (\n  INSERT INTO ops.logs (level, workflow, event_code, execution_id, is_synthetic)\n  VALUES ('info', 'ops-data-retention', 'retention_completed', $1, true) RETURNING 1\n)\nSELECT (SELECT count(*) FROM q) AS question_cleared, (SELECT count(*) FROM l) AS logs_deleted;",
+        "operation": "executeQuery",
+        "options": {
+          "queryReplacement": "={{ [String($execution.id)] }}"
+        }
+      },
+      "retryOnFail": true,
+      "executeOnce": true,
+      "name": "Run Retention",
+      "maxTries": 3,
+      "position": [
+        300,
+        0
+      ],
+      "typeVersion": 2.7
+    }
+  ],
+  "connections": {
+    "Daily Schedule 03:00": {
+      "main": [
+        [
+          {
+            "node": "Run Retention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Run Retention",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "errorWorkflow": "globalErrorHandler01",
+    "executionOrder": "v1"
+  },
+  "staticData": {
+    "node:Daily Schedule 03:00": {
+      "recurrenceRules": [
+        null
+      ],
+      "recurrenceRuleSignatures": [
+        null
+      ]
+    }
+  },
+  "meta": null,
+  "nodeGroups": [],
+  "pinData": null,
+  "versionId": "ec45443a-5857-4838-afed-b2296b8efebc",
+  "activeVersionId": "ec45443a-5857-4838-afed-b2296b8efebc",
+  "versionCounter": 1,
+  "triggerCount": 1,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "shared": [
+    {
+      "updatedAt": "2026-10-15T01:19:01.702Z",
+      "createdAt": "2026-10-15T01:19:01.702Z",
+      "role": "workflow:owner",
+      "workflowId": "opsDataRetention01",
+      "projectId": "XLSQ9BfHWp5ic67H",
+      "project": {
+        "updatedAt": "2026-09-23T16:23:03.392Z",
+        "createdAt": "2026-09-23T16:14:37.793Z",
+        "id": "XLSQ9BfHWp5ic67H",
+        "name": "Yaretzi Castillo <yarecasst@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "customTelemetryTags": [],
+        "creatorId": "3f9c121f-47b6-4a9d-844d-b8f81c4f16a0"
+      }
+    }
+  ],
+  "versionMetadata": {
+    "name": "Version ec45443a",
+    "description": ""
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-26T21:46:57.756Z",
+  "updatedAt": "2026-10-15T00:38:26.570Z",
   "createdAt": "2026-09-25T21:59:44.166Z",
   "id": "TTXAxiisqh4bZcsN",
   "name": "samsara-mock-geofence-events",
@@ -118,7 +118,11 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "globalErrorHandler01",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
   "staticData": null,
   "meta": null,
@@ -126,7 +130,7 @@
   "pinData": {},
   "versionId": "444c2e35-82ee-47a4-9f38-2d68e6fb0113",
   "activeVersionId": null,
-  "versionCounter": 30,
+  "versionCounter": 31,
   "triggerCount": 0,
   "sourceWorkflowId": null,
   "tags": [],
